@@ -171,6 +171,8 @@ export class AppController {
       return;
     }
 
+    return
+
     try {
       const response = await axios.post(
         'https://graph.instagram.com/v26.0/me/messages',
