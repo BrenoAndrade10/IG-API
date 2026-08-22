@@ -25,9 +25,43 @@ type InstagramWebhookBody = {
   }[];
 };
 
+type InstagramMessage =
+  | {
+      text: string;
+    }
+  | {
+      attachment: {
+        type: 'image';
+        payload: {
+          url: string;
+          is_reusable: boolean;
+        };
+      };
+    };
+
+const INSTAGRAM_API_URL = 'https://graph.instagram.com/v26.0/me/messages';
+const RECIPE_IMAGE_PATH = '/assets/recipes/maca-cozida.jpeg';
+const APPLE_COMMENT_KEYWORD = 'maca';
+const APP_BASE_URL = process.env.APP_BASE_URL;
+const RECIPE_IMAGE_URL =
+  process.env.RECIPE_IMAGE_URL ??
+  (APP_BASE_URL
+    ? new URL(RECIPE_IMAGE_PATH, APP_BASE_URL).toString()
+    : undefined);
+
+const APPLE_RECIPE_MESSAGE = `Oi, mãe!
+
+Vi que você comentou MAÇÃ no Reels, então aqui está a receita da maçã cozida que faço por aqui.
+
+Salve para fazer com calma! 🍎
+
+E, se você quer aprender mais receitas como essa e entender o caminho que ensino para controlar a dermatite do seu filho, entre no meu grupo do WhatsApp.
+
+O link está na bio! ❤️`;
+
 @Controller()
 export class AppController {
-  constructor(private readonly appService: AppService) { }
+  constructor(private readonly appService: AppService) {}
 
   @Get('privacy')
   @Header('Content-Type', 'text/html')
@@ -127,7 +161,8 @@ export class AppController {
     @Query('hub.challenge') challenge: string,
     @Res() response: Response,
   ) {
-    const VERIFY_TOKEN = 'igwh_7f3c91a8e42d6b50c17f94e83a2d65b1f9c407ae583d21c6';
+    const VERIFY_TOKEN =
+      'igwh_7f3c91a8e42d6b50c17f94e83a2d65b1f9c407ae583d21c6';
 
     if (mode === 'subscribe' && token === VERIFY_TOKEN) {
       console.log('WEBHOOK_VERIFIED');
@@ -156,41 +191,53 @@ export class AppController {
       body.entry
         ?.flatMap((entry) => entry.changes ?? [])
         .filter((change) => change.field === 'comments')
+        .filter((change) => this.isAppleRecipeComment(change.value?.text))
         .map((change) => change.value?.id ?? change.value?.comment_id)
         .filter((commentId): commentId is string => Boolean(commentId)) ?? []
     );
   }
 
-  private async sendInstagramPrivateReply(commentId: string) {
-    const accessToken = 'IGAAWbzGbJ8ZBZABZAFlQQXdmRGE0bUZAxd1FDNlROWEhaVFBJNENnTmEtM3A5MkRCOVctLW5JdXpPX1haUGdqN3czamtPR3NpR3lvUDNfd2dadTcxVnBFUDdNOUcyVnhWUHJVdUZADeFVYb3NETUxTa2lRc1BvekJMLXRiMXBVSk5uQQZDZD';
+  private isAppleRecipeComment(commentText?: string) {
+    if (!commentText) {
+      return false;
+    }
 
-    const message = 'Olá! 👋 Vi seu comentário. Aqui está o que você pediu!';
+    const normalizedComment = commentText
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .toLowerCase();
+
+    return normalizedComment.split(/\W+/).includes(APPLE_COMMENT_KEYWORD);
+  }
+
+  private async sendInstagramPrivateReply(commentId: string) {
+    const accessToken = process.env.INSTAGRAM_ACCESS_TOKEN;
 
     if (!accessToken) {
       console.warn('INSTAGRAM_ACCESS_TOKEN não configurado.');
       return;
     }
 
-    return
-
     try {
-      const response = await axios.post(
-        'https://graph.instagram.com/v26.0/me/messages',
-        {
-          recipient: {
-            comment_id: commentId,
+      if (RECIPE_IMAGE_URL) {
+        await this.sendInstagramMessage(commentId, accessToken, {
+          attachment: {
+            type: 'image',
+            payload: {
+              url: RECIPE_IMAGE_URL,
+              is_reusable: true,
+            },
           },
-          message: {
-            text: message,
-          },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-        },
-      );
+        });
+      } else {
+        console.warn(
+          'APP_BASE_URL ou RECIPE_IMAGE_URL não configurado; enviando apenas texto.',
+        );
+      }
+
+      const response = await this.sendInstagramMessage(commentId, accessToken, {
+        text: APPLE_RECIPE_MESSAGE,
+      });
 
       console.log(
         '✅ INSTAGRAM PRIVATE REPLY SENT:',
@@ -200,20 +247,35 @@ export class AppController {
       if (axios.isAxiosError(error)) {
         console.error(
           '❌ INSTAGRAM PRIVATE REPLY FAILED:',
-          JSON.stringify(
-            error.response?.data ?? error.message,
-            null,
-            2,
-          ),
+          JSON.stringify(error.response?.data ?? error.message, null, 2),
         );
 
         return;
       }
 
-      console.error(
-        '❌ INSTAGRAM PRIVATE REPLY FAILED:',
-        error,
-      );
+      console.error('❌ INSTAGRAM PRIVATE REPLY FAILED:', error);
     }
+  }
+
+  private sendInstagramMessage(
+    commentId: string,
+    accessToken: string,
+    message: InstagramMessage,
+  ) {
+    return axios.post(
+      INSTAGRAM_API_URL,
+      {
+        recipient: {
+          comment_id: commentId,
+        },
+        message,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
   }
 }
