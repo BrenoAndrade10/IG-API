@@ -16,6 +16,7 @@ type CliOptions = {
   from?: string;
   dryRun?: boolean;
   batchSize?: number;
+  batchDelayMs?: number;
 };
 
 type SendStatus = 'sent' | 'failed';
@@ -102,6 +103,9 @@ const parseArgs = (args: string[]): CliOptions => {
       case '--batch-size':
         options.batchSize = Number(nextValue);
         break;
+      case '--batch-delay-ms':
+        options.batchDelayMs = Number(nextValue);
+        break;
       default:
         throw new Error(`Parâmetro não reconhecido: ${arg}`);
     }
@@ -157,6 +161,7 @@ Opções:
   --subject   Assunto do email
   --from      Remetente no formato "Nome <email@dominio.com>"
   --batch-size  Opcional: quantidade de envios simultâneos. Padrão: 100
+  --batch-delay-ms  Opcional: intervalo entre batches em ms. Padrão: 4000
   --cc        Opcional: emails em cópia separados por vírgula
   --dry-run   Simula o envio, sem chamar a API`);
 };
@@ -282,6 +287,11 @@ const sendEmail = async (input: {
     html: input.html,
   });
 
+const sleep = (ms: number) =>
+  new Promise((resolvePromise) => {
+    setTimeout(resolvePromise, ms);
+  });
+
 const renderTemplate = (templateContent: string) => {
   const appBaseUrl = process.env.APP_BASE_URL?.replace(/\/$/, '');
 
@@ -345,9 +355,14 @@ const main = async () => {
   );
   const skippedCount = emails.length - pendingEmails.length;
   const batchSize = options.batchSize ?? 100;
+  const batchDelayMs = options.batchDelayMs ?? 4000;
 
   if (!Number.isInteger(batchSize) || batchSize <= 0) {
     throw new Error('--batch-size precisa ser um número inteiro maior que zero.');
+  }
+
+  if (!Number.isInteger(batchDelayMs) || batchDelayMs < 0) {
+    throw new Error('--batch-delay-ms precisa ser um número inteiro maior ou igual a zero.');
   }
 
   console.log(`Campanha: ${campaign}`);
@@ -355,6 +370,7 @@ const main = async () => {
   console.log(`Já enviados anteriormente: ${skippedCount}`);
   console.log(`Pendentes para envio: ${pendingEmails.length}`);
   console.log(`Tamanho do batch: ${batchSize}`);
+  console.log(`Delay entre batches: ${batchDelayMs}ms`);
 
   if (options.dryRun) {
     console.log('Dry-run ativo: nenhum email foi enviado.');
@@ -418,6 +434,11 @@ const main = async () => {
     });
 
     saveHistory(historyPath, history);
+
+    if (index < batches.length - 1 && batchDelayMs > 0) {
+      console.log(`Aguardando ${batchDelayMs}ms antes do próximo batch...`);
+      await sleep(batchDelayMs);
+    }
   }
 
   console.log(`Histórico salvo em: ${historyPath}`);
