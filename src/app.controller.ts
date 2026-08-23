@@ -25,39 +25,44 @@ type InstagramWebhookBody = {
   }[];
 };
 
-type InstagramMessage =
-  | {
-      text: string;
-    }
-  | {
-      attachment: {
-        type: 'image';
-        payload: {
-          url: string;
-          is_reusable: boolean;
-        };
-      };
-    };
+type InstagramMessage = {
+  text: string;
+};
+
+const isAxiosError = (error: unknown): error is import('axios').AxiosError =>
+  axios.isAxiosError(error);
+
+const getInstagramErrorData = (error: unknown) => {
+  if (isAxiosError(error)) {
+    return error.response?.data ?? error.message;
+  }
+
+  return error;
+};
 
 const INSTAGRAM_API_URL = 'https://graph.instagram.com/v26.0/me/messages';
-const RECIPE_IMAGE_PATH = '/assets/recipes/maca-cozida.jpeg';
 const APPLE_COMMENT_KEYWORD = 'maca';
-const APP_BASE_URL = process.env.APP_BASE_URL;
-const RECIPE_IMAGE_URL =
-  process.env.RECIPE_IMAGE_URL ??
-  (APP_BASE_URL
-    ? new URL(RECIPE_IMAGE_PATH, APP_BASE_URL).toString()
-    : undefined);
 
 const APPLE_RECIPE_MESSAGE = `Oi, mãe!
 
 Vi que você comentou MAÇÃ no Reels, então aqui está a receita da maçã cozida que faço por aqui.
 
+Ingredientes:
+- 1 maçã cortada, sem casca
+- Água filtrada, até cobrir
+- Manteiga ou óleo de coco, a gosto, para servir
+
+Modo de preparo:
+1. Corte a maçã sem casca em pedaços.
+2. Coloque em uma panela com água filtrada até cobrir.
+3. Deixe ferver até a maçã ficar macia, no ponto de amassar.
+4. Sirva morna, com uma boa quantidade de gordura, como manteiga ou óleo de coco.
+
 Salve para fazer com calma! 🍎
 
 E, se você quer aprender mais receitas como essa e entender o caminho que ensino para controlar a dermatite do seu filho, entre no meu grupo do WhatsApp.
 
-O link está na bio! ❤️`;
+Entre aqui: https://biancachambo.com.br/listadeespera/ ❤️`;
 
 @Controller()
 export class AppController {
@@ -219,22 +224,6 @@ export class AppController {
     }
 
     try {
-      if (RECIPE_IMAGE_URL) {
-        await this.sendInstagramMessage(commentId, accessToken, {
-          attachment: {
-            type: 'image',
-            payload: {
-              url: RECIPE_IMAGE_URL,
-              is_reusable: true,
-            },
-          },
-        });
-      } else {
-        console.warn(
-          'APP_BASE_URL ou RECIPE_IMAGE_URL não configurado; enviando apenas texto.',
-        );
-      }
-
       const response = await this.sendInstagramMessage(commentId, accessToken, {
         text: APPLE_RECIPE_MESSAGE,
       });
@@ -244,16 +233,10 @@ export class AppController {
         JSON.stringify(response.data, null, 2),
       );
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        console.error(
-          '❌ INSTAGRAM PRIVATE REPLY FAILED:',
-          JSON.stringify(error.response?.data ?? error.message, null, 2),
-        );
-
-        return;
-      }
-
-      console.error('❌ INSTAGRAM PRIVATE REPLY FAILED:', error);
+      console.error(
+        '❌ INSTAGRAM PRIVATE REPLY FAILED:',
+        JSON.stringify(getInstagramErrorData(error), null, 2),
+      );
     }
   }
 

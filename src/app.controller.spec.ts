@@ -28,7 +28,6 @@ describe('AppController', () => {
 
   describe('receiveInstagramWebhook', () => {
     const previousAccessToken = process.env.INSTAGRAM_ACCESS_TOKEN;
-    const previousRecipeImageUrl = process.env.RECIPE_IMAGE_URL;
 
     beforeEach(() => {
       mockedAxios.post.mockResolvedValue({ data: { ok: true } });
@@ -41,12 +40,6 @@ describe('AppController', () => {
         process.env.INSTAGRAM_ACCESS_TOKEN = previousAccessToken;
       } else {
         delete process.env.INSTAGRAM_ACCESS_TOKEN;
-      }
-
-      if (previousRecipeImageUrl) {
-        process.env.RECIPE_IMAGE_URL = previousRecipeImageUrl;
-      } else {
-        delete process.env.RECIPE_IMAGE_URL;
       }
     });
 
@@ -100,6 +93,15 @@ describe('AppController', () => {
           },
           message: expect.objectContaining({
             text: expect.stringContaining('receita da maçã cozida'),
+          }),
+        }),
+        expect.any(Object),
+      );
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          message: expect.objectContaining({
+            text: expect.stringContaining('biancachambo.com.br/listadeespera'),
           }),
         }),
         expect.any(Object),
