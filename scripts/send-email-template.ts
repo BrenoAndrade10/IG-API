@@ -1,3 +1,4 @@
+import { resolveMx } from 'dns/promises';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { Resend } from 'resend';
@@ -17,9 +18,18 @@ type CliOptions = {
   dryRun?: boolean;
   batchSize?: number;
   batchDelayMs?: number;
+  rateLimitDelayMs?: number;
 };
 
 type SendStatus = 'sent' | 'failed';
+
+type EmailValidationResult = {
+  validEmails: string[];
+  invalidEmails: {
+    email: string;
+    reason: string;
+  }[];
+};
 
 type EmailHistory = {
   version: 1;
@@ -106,6 +116,9 @@ const parseArgs = (args: string[]): CliOptions => {
       case '--batch-delay-ms':
         options.batchDelayMs = Number(nextValue);
         break;
+      case '--rate-limit-delay-ms':
+        options.rateLimitDelayMs = Number(nextValue);
+        break;
       default:
         throw new Error(`Parâmetro não reconhecido: ${arg}`);
     }
@@ -160,8 +173,9 @@ Opções:
   --to        Um ou mais emails separados por vírgula, se não usar --list
   --subject   Assunto do email
   --from      Remetente no formato "Nome <email@dominio.com>"
-  --batch-size  Opcional: quantidade de envios simultâneos. Padrão: 100
-  --batch-delay-ms  Opcional: intervalo entre batches em ms. Padrão: 4000
+  --batch-size  Opcional: quantidade de emails por request no array to. Padrão: 1
+  --batch-delay-ms  Opcional: intervalo entre batches em ms. Padrão: 2000
+  --rate-limit-delay-ms  Opcional: espera após erro 429 em ms. Padrão: 1000
   --cc        Opcional: emails em cópia separados por vírgula
   --dry-run   Simula o envio, sem chamar a API`);
 };
@@ -169,6 +183,22 @@ Opções:
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
 const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+const knownInvalidDomains = new Set([
+  'gnail.com',
+  'gmai.com',
+  'gmail.con',
+  'gmail.cm',
+  'gmal.com',
+  'gmial.com',
+  'hotnail.com',
+  'hotmai.com',
+  'hotmail.con',
+  'outlok.com',
+  'outlook.con',
+  'yaho.com',
+  'yahoo.con',
+]);
 
 const uniqueEmails = (emails: string[]) =>
   Array.from(
@@ -178,6 +208,127 @@ const uniqueEmails = (emails: string[]) =>
         .filter((email) => email && isValidEmail(email)),
     ),
   );
+
+const getEmailDomain = (email: string) => email.split('@')[1]?.toLowerCase();
+
+const resolveMxRecords = async (domain: string) => {
+  try {
+    return await resolveMx(domain);
+  } catch (error) {
+    const url = new URL('https://cloudflare-dns.com/dns-query');
+    url.searchParams.set('name', domain);
+    url.searchParams.set('type', 'MX');
+
+    const response = await fetch(url, {
+      headers: {
+        accept: 'application/dns-json',
+      },
+    });
+
+    if (!response.ok) {
+      throw error;
+    }
+
+    const data = (await response.json()) as {
+      Answer?: {
+        data?: string;
+      }[];
+    };
+
+    return (
+      data.Answer?.map((answer) => {
+        const [priority, exchange] = answer.data?.split(/\s+/) ?? [];
+
+        return {
+          priority: Number(priority),
+          exchange: exchange?.replace(/\.$/, '') ?? '',
+        };
+      }).filter((record) => record.exchange && Number.isFinite(record.priority)) ??
+      []
+    );
+  }
+};
+
+const validateEmailDomains = async (
+  emails: string[],
+): Promise<EmailValidationResult> => {
+  const invalidEmails: EmailValidationResult['invalidEmails'] = [];
+  const emailsByDomain = new Map<string, string[]>();
+
+  emails.forEach((email) => {
+    const domain = getEmailDomain(email);
+
+    if (!domain) {
+      invalidEmails.push({
+        email,
+        reason: 'domínio ausente',
+      });
+      return;
+    }
+
+    if (knownInvalidDomains.has(domain)) {
+      invalidEmails.push({
+        email,
+        reason: `domínio com typo conhecido: ${domain}`,
+      });
+      return;
+    }
+
+    emailsByDomain.set(domain, [...(emailsByDomain.get(domain) ?? []), email]);
+  });
+
+  const domainResults = await Promise.all(
+    Array.from(emailsByDomain.keys()).map(async (domain) => {
+      try {
+        const records = await resolveMxRecords(domain);
+
+        return {
+          domain,
+          valid: records.length > 0,
+          reason: records.length ? undefined : 'domínio sem registros MX',
+        };
+      } catch (error) {
+        return {
+          domain,
+          valid: false,
+          reason:
+            error instanceof Error
+              ? `falha ao consultar MX: ${error.message}`
+              : 'falha ao consultar MX',
+        };
+      }
+    }),
+  );
+
+  const invalidDomains = new Map(
+    domainResults
+      .filter((result) => !result.valid)
+      .map((result) => [result.domain, result.reason ?? 'domínio inválido']),
+  );
+  const validEmails = Array.from(emailsByDomain.entries()).flatMap(
+    ([domain, domainEmails]) => {
+      const invalidReason = invalidDomains.get(domain);
+
+      if (!invalidReason) {
+        return domainEmails;
+      }
+
+      domainEmails.forEach((email) => {
+        invalidEmails.push({
+          email,
+          reason: invalidReason,
+        });
+      });
+
+      return [];
+    },
+  );
+
+  return {
+    validEmails,
+    invalidEmails,
+  };
+};
 
 const readEmailsFromXlsx = (options: CliOptions) => {
   if (!options.list) {
@@ -271,17 +422,17 @@ const chunk = <T>(items: T[], size: number) => {
   return chunks;
 };
 
-const sendEmail = async (input: {
+const sendEmailBatch = async (input: {
   resend: Resend;
   from: string;
-  to: string;
+  to: string[];
   cc?: string[];
   subject: string;
   html: string;
 }) =>
   input.resend.emails.send({
     from: input.from,
-    to: [input.to],
+    to: input.to,
     cc: input.cc,
     subject: input.subject,
     html: input.html,
@@ -303,6 +454,23 @@ const renderTemplate = (templateContent: string) => {
 
   return templateContent.replaceAll('{{APP_BASE_URL}}', appBaseUrl ?? '');
 };
+
+const getErrorStatus = (error: unknown) => {
+  const errorRecord = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    response?: {
+      status?: unknown;
+    };
+  };
+  const status =
+    errorRecord.status ?? errorRecord.statusCode ?? errorRecord.response?.status;
+
+  return typeof status === 'number' ? status : undefined;
+};
+
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
 
 const main = async () => {
   loadEnvFile();
@@ -350,12 +518,15 @@ const main = async () => {
     options.history ?? 'email-send-history.json',
   );
   const history = loadHistory(historyPath);
-  const pendingEmails = emails.filter(
+  console.log('Validando domínios por MX...');
+  const validation = await validateEmailDomains(emails);
+  const pendingEmails = validation.validEmails.filter(
     (email) => !hasReceivedCampaign(history, email, campaign),
   );
-  const skippedCount = emails.length - pendingEmails.length;
-  const batchSize = options.batchSize ?? 100;
-  const batchDelayMs = options.batchDelayMs ?? 4000;
+  const skippedCount = validation.validEmails.length - pendingEmails.length;
+  const batchSize = options.batchSize ?? 1;
+  const batchDelayMs = options.batchDelayMs ?? 2000;
+  const rateLimitDelayMs = options.rateLimitDelayMs ?? 1000;
 
   if (!Number.isInteger(batchSize) || batchSize <= 0) {
     throw new Error('--batch-size precisa ser um número inteiro maior que zero.');
@@ -365,12 +536,28 @@ const main = async () => {
     throw new Error('--batch-delay-ms precisa ser um número inteiro maior ou igual a zero.');
   }
 
+  if (!Number.isInteger(rateLimitDelayMs) || rateLimitDelayMs < 0) {
+    throw new Error(
+      '--rate-limit-delay-ms precisa ser um número inteiro maior ou igual a zero.',
+    );
+  }
+
   console.log(`Campanha: ${campaign}`);
   console.log(`Emails válidos na lista: ${emails.length}`);
+  console.log(`Bloqueados por domínio/formato inválido: ${validation.invalidEmails.length}`);
+  validation.invalidEmails.slice(0, 10).forEach((invalidEmail) => {
+    console.log(`- ${invalidEmail.email}: ${invalidEmail.reason}`);
+  });
+  if (validation.invalidEmails.length > 10) {
+    console.log(
+      `...mais ${validation.invalidEmails.length - 10} email(s) bloqueado(s).`,
+    );
+  }
   console.log(`Já enviados anteriormente: ${skippedCount}`);
   console.log(`Pendentes para envio: ${pendingEmails.length}`);
-  console.log(`Tamanho do batch: ${batchSize}`);
+  console.log(`Emails por request: ${batchSize}`);
   console.log(`Delay entre batches: ${batchDelayMs}ms`);
+  console.log(`Delay após 429: ${rateLimitDelayMs}ms`);
 
   if (options.dryRun) {
     console.log('Dry-run ativo: nenhum email foi enviado.');
@@ -382,56 +569,66 @@ const main = async () => {
   for (let index = 0; index < batches.length; index += 1) {
     const batch = batches[index];
 
-    console.log(`Enviando batch ${index + 1}/${batches.length}: ${batch.length} emails`);
+    console.log(
+      `Enviando batch ${index + 1}/${batches.length}: ${batch.length} emails em um request`,
+    );
 
-    const results = await Promise.allSettled(
-      batch.map((email) =>
-        sendEmail({
+    let response: Awaited<ReturnType<typeof sendEmailBatch>> | undefined;
+
+    while (true) {
+      try {
+        response = await sendEmailBatch({
           resend,
           from,
-          to: email,
+          to: batch,
           cc: options.cc,
           subject,
           html,
-        }).then((response) => ({
-          email,
-          response,
-        })),
-      ),
-    );
-
-    results.forEach((result, resultIndex) => {
-      const email = batch[resultIndex];
-
-      if (result.status === 'fulfilled') {
-        recordEmailStatus(history, {
-          email,
-          campaign,
-          status: 'sent',
-          template,
-          subject,
         });
+        break;
+      } catch (error) {
+        if (getErrorStatus(error) === 429) {
+          console.warn(
+            `Rate limit 429 no batch ${index + 1}/${batches.length}. Nenhum email do batch será salvo ainda. Aguardando ${rateLimitDelayMs}ms...`,
+          );
+          await sleep(rateLimitDelayMs);
+          continue;
+        }
 
-        console.log(
-          `Enviado para ${email}: ${JSON.stringify(result.value.response)}`,
-        );
-        return;
+        const message = getErrorMessage(error);
+
+        batch.forEach((email) => {
+          recordEmailStatus(history, {
+            email,
+            campaign,
+            status: 'failed',
+            template,
+            subject,
+            error: message,
+          });
+        });
+        saveHistory(historyPath, history);
+        console.error(`Falha no batch ${index + 1}/${batches.length}: ${message}`);
+        response = undefined;
+        break;
       }
+    }
 
-      const message =
-        result.reason instanceof Error ? result.reason.message : String(result.reason);
+    if (!response) {
+      continue;
+    }
 
+    batch.forEach((email) => {
       recordEmailStatus(history, {
         email,
         campaign,
-        status: 'failed',
+        status: 'sent',
         template,
         subject,
-        error: message,
       });
-
-      console.error(`Falha ao enviar para ${email}: ${message}`);
     });
+
+    console.log(`Batch enviado: ${JSON.stringify(response)}`);
 
     saveHistory(historyPath, history);
 

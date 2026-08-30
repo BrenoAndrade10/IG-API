@@ -130,7 +130,53 @@ describe('AppController', () => {
       expect(mockedAxios.post).toHaveBeenCalledTimes(1);
     });
 
-    it('should not send the apple recipe DM when the comment does not include the keyword', async () => {
+    it('should send the sauerkraut recipe DM when the comment says CHUCRUTE', async () => {
+      process.env.INSTAGRAM_ACCESS_TOKEN = 'test-token';
+
+      await appController.receiveInstagramWebhook({
+        entry: [
+          {
+            changes: [
+              {
+                field: 'comments',
+                value: {
+                  id: '18084267293257338',
+                  text: 'Quero a receita do CHUCRUTE',
+                },
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        'https://graph.instagram.com/v26.0/me/messages',
+        expect.objectContaining({
+          recipient: {
+            comment_id: '18084267293257338',
+          },
+          message: expect.objectContaining({
+            text: expect.stringContaining(
+              'Vi que você comentou CHUCRUTE no meu vídeo',
+            ),
+          }),
+        }),
+        expect.any(Object),
+      );
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          message: expect.objectContaining({
+            text: expect.stringContaining(
+              'Semana Colocando a Dermatite pra Dormir',
+            ),
+          }),
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('should not send a recipe DM when the comment does not include a keyword', async () => {
       process.env.INSTAGRAM_ACCESS_TOKEN = 'test-token';
 
       await appController.receiveInstagramWebhook({

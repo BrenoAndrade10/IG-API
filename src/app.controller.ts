@@ -29,6 +29,11 @@ type InstagramMessage = {
   text: string;
 };
 
+type InstagramCommentReply = {
+  commentId: string;
+  message: InstagramMessage;
+};
+
 const isAxiosError = (error: unknown): error is import('axios').AxiosError =>
   axios.isAxiosError(error);
 
@@ -42,6 +47,7 @@ const getInstagramErrorData = (error: unknown) => {
 
 const INSTAGRAM_API_URL = 'https://graph.instagram.com/v26.0/me/messages';
 const APPLE_COMMENT_KEYWORD = 'maca';
+const SAUERKRAUT_COMMENT_KEYWORD = 'chucrute';
 
 const APPLE_RECIPE_MESSAGE = `Oi, mãe!
 
@@ -63,6 +69,54 @@ Salve para fazer com calma! 🍎
 E, se você quer aprender mais receitas como essa e entender o caminho que ensino para controlar a dermatite do seu filho, entre no meu grupo do WhatsApp.
 
 Entre aqui: https://biancachambo.com.br/listadeespera/ ❤️`;
+
+const SAUERKRAUT_RECIPE_MESSAGE = `Oi! 💛 Vi que você comentou CHUCRUTE no meu vídeo.
+E aqui está a receita!
+
+Ingredientes
+•⁠  ⁠1 cabeça de repolho
+•⁠  ⁠I colher de sopa de sal
+•⁠  ⁠Água filtrada
+•⁠  ⁠Vidro esterilizado
+
+Modo de Preparo
+1. Lave as cabeças de repolhos
+2. Remova as duas primeiras folhas externas
+3. Retire mais duas folhas externas e reserve
+4. Corte em tiras finas ou rale ou repolho
+5. Coloque o repolho em uma tigela grande com sal
+6. misture para incorporar o sal e deixe descansar de 10 a 15 minutos
+7. Massageie o repolho até que o suco comece a sair
+8. Separe o repolho do suco com a ajuda de uma peneira
+9. Coloque o repolho bem amassado em potes de vidro
+10. Cubra com uma folha inteira para segurar o repolho picado
+11. Complete com o suco do repolho até que a folha esteja completamente submersa
+12. Se não sair líquido suficiente para cobrir completamente a folho do repolho, faça uma salmoura com i litro de água e i colher de chá de sal. Adicione essa salmoura ao vidro até cobri a folha de repolho
+13. Deixe o chucrute descansar em temperatura ambiente e no escuro por, no mínimo, 7 dias antes de consumir. Esse repolho pode ficar fermentando por até r ano
+14. Guarde na geladeira após aberto
+
+•⁠  ⁠Você pode fazer variações de chucrute, adicionando alho ou gengibre!
+•⁠  ⁠Certifique-se de que seu chucrute esteja bem coberto no pore. Você quer que o líquido submerja completamente o repolho o tempo todo. Se algum repolho (mínimo que seja) ficar exposto acima do líquido, ele pode mofar ou contaminar. Certifique-se de usar água filtrada. O cloro e outros produtos químicos presentes na água da torneira matarão as bactérias benéficas e impedirão que a fermentação saudável aconteça.
+
+Quero aproveitar para te fazer um convite. 🥰
+Daqui a pouquinho vai acontecer a Semana Colocando a Dermatite pra Dormir, um evento gratuito onde eu vou te mostrar o caminho que fez diferença aqui em casa e que hoje ensino para outras mães.
+
+Se você sente que tá cansada de só controlar a pele e quer entender o que fazer com mais direção, vem participar comigo!
+
+👉 O link para se inscrever gratuitamente está na minha bio.
+
+Te espero lá! ❤️`;
+
+const INSTAGRAM_COMMENT_REPLY_RULES = [
+  {
+    keyword: APPLE_COMMENT_KEYWORD,
+    message: APPLE_RECIPE_MESSAGE,
+  },
+  {
+    keyword: SAUERKRAUT_COMMENT_KEYWORD,
+    message: SAUERKRAUT_RECIPE_MESSAGE,
+  },
+];
 
 @Controller()
 export class AppController {
@@ -182,29 +236,44 @@ export class AppController {
   async receiveInstagramWebhook(@Body() body: InstagramWebhookBody) {
     console.log('🔥 INSTAGRAM EVENT:', JSON.stringify(body, null, 2));
 
-    const commentIds = this.getInstagramCommentIds(body);
+    const commentReplies = this.getInstagramCommentReplies(body);
 
     await Promise.all(
-      commentIds.map((commentId) => this.sendInstagramPrivateReply(commentId)),
+      commentReplies.map((reply) => this.sendInstagramPrivateReply(reply)),
     );
 
     return 'EVENT_RECEIVED';
   }
 
-  private getInstagramCommentIds(body: InstagramWebhookBody) {
+  private getInstagramCommentReplies(
+    body: InstagramWebhookBody,
+  ): InstagramCommentReply[] {
     return (
       body.entry
         ?.flatMap((entry) => entry.changes ?? [])
         .filter((change) => change.field === 'comments')
-        .filter((change) => this.isAppleRecipeComment(change.value?.text))
-        .map((change) => change.value?.id ?? change.value?.comment_id)
-        .filter((commentId): commentId is string => Boolean(commentId)) ?? []
+        .map((change) => {
+          const commentId = change.value?.id ?? change.value?.comment_id;
+          const replyRule = this.getReplyRule(change.value?.text);
+
+          if (!commentId || !replyRule) {
+            return null;
+          }
+
+          return {
+            commentId,
+            message: {
+              text: replyRule.message,
+            },
+          };
+        })
+        .filter((reply): reply is InstagramCommentReply => Boolean(reply)) ?? []
     );
   }
 
-  private isAppleRecipeComment(commentText?: string) {
+  private getReplyRule(commentText?: string) {
     if (!commentText) {
-      return false;
+      return undefined;
     }
 
     const normalizedComment = commentText
@@ -212,10 +281,14 @@ export class AppController {
       .replace(/\p{Diacritic}/gu, '')
       .toLowerCase();
 
-    return normalizedComment.split(/\W+/).includes(APPLE_COMMENT_KEYWORD);
+    const words = normalizedComment.split(/\W+/);
+
+    return INSTAGRAM_COMMENT_REPLY_RULES.find((rule) =>
+      words.includes(rule.keyword),
+    );
   }
 
-  private async sendInstagramPrivateReply(commentId: string) {
+  private async sendInstagramPrivateReply(reply: InstagramCommentReply) {
     const accessToken = process.env.INSTAGRAM_ACCESS_TOKEN;
 
     if (!accessToken) {
@@ -224,9 +297,11 @@ export class AppController {
     }
 
     try {
-      const response = await this.sendInstagramMessage(commentId, accessToken, {
-        text: APPLE_RECIPE_MESSAGE,
-      });
+      const response = await this.sendInstagramMessage(
+        reply.commentId,
+        accessToken,
+        reply.message,
+      );
 
       console.log(
         '✅ INSTAGRAM PRIVATE REPLY SENT:',
