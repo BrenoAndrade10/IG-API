@@ -74,38 +74,28 @@ const SAUERKRAUT_RECIPE_MESSAGE = `Oi! 💛 Vi que você comentou CHUCRUTE no me
 E aqui está a receita!
 
 Ingredientes
-•⁠  ⁠1 cabeça de repolho
-•⁠  ⁠I colher de sopa de sal
-•⁠  ⁠Água filtrada
-•⁠  ⁠Vidro esterilizado
+• 1 repolho
+• 1 colher de sopa de sal
+• Água filtrada
+• Vidro esterilizado
 
 Modo de Preparo
-1. Lave as cabeças de repolhos
-2. Remova as duas primeiras folhas externas
-3. Retire mais duas folhas externas e reserve
-4. Corte em tiras finas ou rale ou repolho
-5. Coloque o repolho em uma tigela grande com sal
-6. misture para incorporar o sal e deixe descansar de 10 a 15 minutos
-7. Massageie o repolho até que o suco comece a sair
-8. Separe o repolho do suco com a ajuda de uma peneira
-9. Coloque o repolho bem amassado em potes de vidro
-10. Cubra com uma folha inteira para segurar o repolho picado
-11. Complete com o suco do repolho até que a folha esteja completamente submersa
-12. Se não sair líquido suficiente para cobrir completamente a folho do repolho, faça uma salmoura com i litro de água e i colher de chá de sal. Adicione essa salmoura ao vidro até cobri a folha de repolho
-13. Deixe o chucrute descansar em temperatura ambiente e no escuro por, no mínimo, 7 dias antes de consumir. Esse repolho pode ficar fermentando por até r ano
-14. Guarde na geladeira após aberto
+1. Lave o repolho, retire as folhas externas e reserve 2 folhas inteiras.
+2. Corte em tiras finas ou rale.
+3. Misture com o sal e descanse por 10 a 15 min.
+4. Massageie até soltar bastante líquido.
+5. Coloque o repolho amassado no vidro.
+6. Cubra com uma folha inteira e complete com o próprio líquido.
+7. Se faltar líquido, adicione salmoura: 1 litro de água filtrada + 1 colher de chá de sal.
+8. Deixe no escuro por no mínimo 7 dias. Depois de aberto, guarde na geladeira.
 
-•⁠  ⁠Você pode fazer variações de chucrute, adicionando alho ou gengibre!
-•⁠  ⁠Certifique-se de que seu chucrute esteja bem coberto no pore. Você quer que o líquido submerja completamente o repolho o tempo todo. Se algum repolho (mínimo que seja) ficar exposto acima do líquido, ele pode mofar ou contaminar. Certifique-se de usar água filtrada. O cloro e outros produtos químicos presentes na água da torneira matarão as bactérias benéficas e impedirão que a fermentação saudável aconteça.
+Você pode variar adicionando alho ou gengibre!
 
-Quero aproveitar para te fazer um convite. 🥰
-Daqui a pouquinho vai acontecer a Semana Colocando a Dermatite pra Dormir, um evento gratuito onde eu vou te mostrar o caminho que fez diferença aqui em casa e que hoje ensino para outras mães.
+Importante: o repolho precisa ficar sempre submerso para não mofar.
 
-Se você sente que tá cansada de só controlar a pele e quer entender o que fazer com mais direção, vem participar comigo!
+Quero te convidar para a Semana Colocando a Dermatite pra Dormir, um evento gratuito onde vou mostrar o caminho que fez diferença aqui em casa.
 
-👉 O link para se inscrever gratuitamente está na minha bio.
-
-Te espero lá! ❤️`;
+👉 Inscrição gratuita no link da minha bio. Te espero lá! ❤️`;
 
 const INSTAGRAM_COMMENT_REPLY_RULES = [
   {

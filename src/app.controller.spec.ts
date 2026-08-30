@@ -174,6 +174,12 @@ describe('AppController', () => {
         }),
         expect.any(Object),
       );
+
+      const requestBody = mockedAxios.post.mock.calls[0][1] as {
+        message: { text: string };
+      };
+
+      expect(requestBody.message.text.length).toBeLessThanOrEqual(1000);
     });
 
     it('should not send a recipe DM when the comment does not include a keyword', async () => {
